@@ -1841,7 +1841,7 @@ namespace MobileGL::MG_Backend::DirectGLES {
             // the current draw batch. It commits every eligible level or leaves them all pending.
             void TryPackedLevelUploads(MG_State::GLState::TextureObjectMipmap* textureMipmapObject,
                                        const MG_Pipe::MGPipeResourceRecord* pushedStorage,
-                                       MG_Pipe::MGPipeHandle pushedRes, GLenum target,
+                                       MG_Pipe::MGPipeHandle pushedRes, TextureTarget target,
                                        const Vector<TextureUploadTarget>& uploadTargets, SizeT mipmapCount,
                                        TextureInternalFormat storageFormat, GLenum glInternalFormat, GLenum glFormat,
                                        GLenum glType);

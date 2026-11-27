@@ -798,19 +798,17 @@ set(MGL_ITEST_MONOLITH_MECHANISM_FILTER
 # would be a name in a list.
 set(MGL_ITEST_GLES_VIEW_FILTER
     "TextureViewScenario.*:TextureViewAliasScenario.*:F1WireScenario.ComputeImageStoreThroughViewPreservesOtherRootLayer:F1WireScenario.TextureViewClearTargetsItsRootMipAndLayer:F1WireScenario.GenerateMipmapThroughViewKeepsOwnerLevelsAndLayersOutsideItsWindow:InvalidImageUnitScenario.ALevelPastATextureViewsWindowReadsZero")
-# Cases that run only in the split-arm entries Harness/SplitLogPaths.cmake.in declares a lane
-# for, and skip by construction anywhere else (no split transport, no declared arm). They are
-# left out of the ambient, verify and whole-binary Magma registrations for the reason above:
-# there they would green-skip on every run.
-set(MGL_ITEST_SPLIT_ARM_ONLY_FILTER
-    "PersistentCoherentMapScenario.ThePushIsTheOnlyRouteAWriteTakesToTheServer")
+# Cases that require a particular transport or direct access to native GLES.
+# Run them through their explicit registrations instead of discovery on every backend.
+set(MGL_ITEST_EXPLICIT_LANE_FILTER
+    "PersistentCoherentMapScenario.ThePushIsTheOnlyRouteAWriteTakesToTheServer:PackedMipCopyTexScenario.*")
 
 # The two lists are named so that SplitLogPaths.cmake.in can reach the ambient CtWireScenario
 # entries, which the integration job's inproc leg runs on the transport it exports.
-mgl_itest_lane("DirectGLES." "-${MGL_ITEST_MONOLITH_MECHANISM_FILTER}:${MGL_ITEST_GLES_VIEW_FILTER}:${MGL_ITEST_SPLIT_ARM_ONLY_FILTER}"
+mgl_itest_lane("DirectGLES." "-${MGL_ITEST_MONOLITH_MECHANISM_FILTER}:${MGL_ITEST_GLES_VIEW_FILTER}:${MGL_ITEST_EXPLICIT_LANE_FILTER}"
     TEST_LIST MGL_AMBIENT_TESTS_GLES ENV "${MGL_ITEST_GLES_ENVIRONMENT}")
 
-mgl_itest_lane("DirectVulkan." "-${MGL_ITEST_MONOLITH_MECHANISM_FILTER}:${MGL_ITEST_SPLIT_ARM_ONLY_FILTER}"
+mgl_itest_lane("DirectVulkan." "-${MGL_ITEST_MONOLITH_MECHANISM_FILTER}:${MGL_ITEST_EXPLICIT_LANE_FILTER}"
     TEST_LIST MGL_AMBIENT_TESTS_VULKAN ENV "${MGL_ITEST_VULKAN_ENVIRONMENT}")
 
 # ScenarioIsolationScenario's two cases in ONE process: the first leaves a deleted program current
@@ -846,6 +844,14 @@ endforeach()
 # the actual view implementation instead of inheriting its default-off skip.
 mgl_itest_lane("DirectGLES." "${MGL_ITEST_GLES_VIEW_FILTER}"
     ENV "${MGL_ITEST_GLES_ENVIRONMENT}\;MOBILEGL_ESPRYT_ENABLE_TEXTURE_VIEW=1")
+
+# The scenario intercepts the native GLES dispatch table through the desktop static library.
+if (NOT ANDROID)
+    target_sources(MobileGLIntegrationTest PRIVATE Scenarios/PackedMipCopyTexScenario.cpp)
+    mgl_itest_lane("DirectGLES." "PackedMipCopyTexScenario.*"
+        LABELS "integration-gpu\;integration-monolith-control"
+        ENV "${MGL_ITEST_GLES_ENVIRONMENT}\;MOBILEGL_TRANSPORT=monolith")
+endif()
 
 # A third registration, of ONE scenario, with asynchronous shader compilation
 # pinned on. Not a second code path in the renderer: a second ALLOCATION pattern.
@@ -1329,13 +1335,13 @@ if (MOBILEGL_PIPE_VERIFY)
     # from the live context at the verb boundary - which is what "the 742 integration entries
     # prove push equals pull" means. Labeled integration-gpu as well so a verify build's
     # `ctest -L integration-gpu` still describes the whole registration set.
-    mgl_itest_lane("DirectGLES.Verify." "-${MGL_ITEST_GLES_VIEW_FILTER}:${MGL_ITEST_SPLIT_ARM_ONLY_FILTER}"
+    mgl_itest_lane("DirectGLES.Verify." "-${MGL_ITEST_GLES_VIEW_FILTER}:${MGL_ITEST_EXPLICIT_LANE_FILTER}"
         LABELS "integration-gpu\;integration-verify\;integration-monolith-control" TIMEOUT ${MGL_ITEST_VERIFY_TIMEOUT} ENV "${MGL_ITEST_GLES_VERIFY_ENVIRONMENT}")
     mgl_itest_lane("DirectGLES.Verify." "${MGL_ITEST_GLES_VIEW_FILTER}"
         LABELS "integration-verify\;integration-monolith-control" TIMEOUT ${MGL_ITEST_VERIFY_TIMEOUT} ENV "${MGL_ITEST_GLES_VERIFY_ENVIRONMENT}\;MOBILEGL_ESPRYT_ENABLE_TEXTURE_VIEW=1")
     gtest_discover_tests(MobileGLIntegrationTest
         TEST_PREFIX "DirectVulkan.Verify."
-        TEST_FILTER "-${MGL_ITEST_SPLIT_ARM_ONLY_FILTER}"
+        TEST_FILTER "-${MGL_ITEST_EXPLICIT_LANE_FILTER}"
         DISCOVERY_TIMEOUT 30
         PROPERTIES
             LABELS "integration-gpu\;integration-verify\;integration-monolith-control"
@@ -3548,7 +3554,7 @@ endif()
 # Whole integration binary on Magma split (informational, no CI gate)
 # =====================================================================================
 # The set the monolith `DirectVulkan.` arm runs (all but MGL_ITEST_MONOLITH_MECHANISM_FILTER,
-# oracles that must not inherit a transport, and MGL_ITEST_SPLIT_ARM_ONLY_FILTER), minus
+# oracles that must not inherit a transport, and MGL_ITEST_EXPLICIT_LANE_FILTER), minus
 # DualBlockScenario (its own lane). No MGITEST_SPLIT_LANE: query-only cases emit no record
 # (ARCHITECTURE.md §16.1). Private log paths
 # come through MGL_MAGMA_FULL_TEST_LISTS, not MGL_SPLIT_ARM_TEST_LISTS, whose entries also get
@@ -3561,7 +3567,7 @@ if (MOBILEGL_BUILD_DISAGGREGATED)
         mgl_itest_join_environment(mglItestMagmaFullEnvironment
             "MOBILEGL_BACKEND_TYPE=DirectVulkan" "MOBILEGL_ITEST_REQUIRE_GPU=1"
             ${MGL_ITEST_CAPABILITY_ENV} ${MGL_ITEST_VULKAN_ENV} ${mglItestArmTransportEnv})
-        mgl_itest_lane("DirectVulkan.${mglItestArm}.Full." "-${MGL_ITEST_MONOLITH_MECHANISM_FILTER}:DualBlockScenario.*:${MGL_ITEST_SPLIT_ARM_ONLY_FILTER}"
+        mgl_itest_lane("DirectVulkan.${mglItestArm}.Full." "-${MGL_ITEST_MONOLITH_MECHANISM_FILTER}:DualBlockScenario.*:${MGL_ITEST_EXPLICIT_LANE_FILTER}"
             LABELS "integration-magma-full-${mglItestArmLower}" TEST_LIST "MGL_MAGMA_FULL_TESTS_${mglItestArmUpper}" PROPERTIES ${mglItestArmProperties} ENV "${mglItestMagmaFullEnvironment}")
         list(APPEND MGL_MAGMA_FULL_TEST_LISTS "MGL_MAGMA_FULL_TESTS_${mglItestArmUpper}")
     endforeach()
@@ -3605,11 +3611,11 @@ if (MOBILEGL_BUILD_DISAGGREGATED AND MOBILEGL_PIPE_VERIFY)
     # MOBILEGL_ESPRYT_ENABLE_TEXTURE_VIEW=1 or DirectGLES withholds GL_ARB_texture_view and they
     # green-skip, so they are subtracted from the first registration and re-registered with the
     # knob. "Every existing verify case on the split arm" is false without the second block.
-    mgl_itest_lane("DirectGLES.VerifySplit." "-${MGL_ITEST_MONOLITH_MECHANISM_FILTER}:${MGL_ITEST_GLES_VIEW_FILTER}:DualBlockScenario.*:${MGL_ITEST_VERIFY_SPLIT_GLES_MAGMA_DECLINE_FILTER}:${MGL_ITEST_SPLIT_ARM_ONLY_FILTER}"
+    mgl_itest_lane("DirectGLES.VerifySplit." "-${MGL_ITEST_MONOLITH_MECHANISM_FILTER}:${MGL_ITEST_GLES_VIEW_FILTER}:DualBlockScenario.*:${MGL_ITEST_VERIFY_SPLIT_GLES_MAGMA_DECLINE_FILTER}:${MGL_ITEST_EXPLICIT_LANE_FILTER}"
         LABELS "integration-verify-split" TIMEOUT ${MGL_ITEST_VERIFY_TIMEOUT} TEST_LIST MGL_VERIFY_SPLIT_TESTS_GLES ENV "${MGL_ITEST_GLES_VERIFY_SPLIT_ENVIRONMENT}")
     mgl_itest_lane("DirectGLES.VerifySplit." "${MGL_ITEST_GLES_VIEW_FILTER}"
         LABELS "integration-verify-split" TIMEOUT ${MGL_ITEST_VERIFY_TIMEOUT} TEST_LIST MGL_VERIFY_SPLIT_TESTS_GLES_VIEW ENV "${MGL_ITEST_GLES_VERIFY_SPLIT_ENVIRONMENT}\;MOBILEGL_ESPRYT_ENABLE_TEXTURE_VIEW=1")
-    mgl_itest_lane("DirectVulkan.VerifySplit." "-${MGL_ITEST_MONOLITH_MECHANISM_FILTER}:DualBlockScenario.*:${MGL_ITEST_SPLIT_ARM_ONLY_FILTER}"
+    mgl_itest_lane("DirectVulkan.VerifySplit." "-${MGL_ITEST_MONOLITH_MECHANISM_FILTER}:DualBlockScenario.*:${MGL_ITEST_EXPLICIT_LANE_FILTER}"
         LABELS "integration-verify-split" TIMEOUT ${MGL_ITEST_VERIFY_TIMEOUT} TEST_LIST MGL_VERIFY_SPLIT_TESTS_VULKAN ENV "${MGL_ITEST_VULKAN_VERIFY_SPLIT_ENVIRONMENT}")
     list(APPEND MGL_VERIFY_SPLIT_TEST_LISTS MGL_VERIFY_SPLIT_TESTS_GLES
          MGL_VERIFY_SPLIT_TESTS_GLES_VIEW MGL_VERIFY_SPLIT_TESTS_VULKAN)

@@ -40,6 +40,11 @@ namespace MobileGL::MG_Util::PackedTextureUpload {
         std::size_t ByteSize() const { return BytesPerTexel * width * height; }
     };
 
+    struct DirectUploadCost {
+        std::uint64_t bytes = 0;
+        std::size_t uploads = 0;
+    };
+
     namespace Detail {
         struct Rect {
             int x, y, width, height;
@@ -90,15 +95,10 @@ namespace MobileGL::MG_Util::PackedTextureUpload {
         }
     } // namespace Detail
 
-    inline bool Pack(Batch& batch, std::uint64_t unionTexels) {
+    inline bool Pack(Batch& batch, DirectUploadCost direct) {
         batch.width = 0;
         batch.height = 0;
         if (batch.count < 2 || batch.count > batch.regions.size()) return false;
-        // Require a full page of traffic savings before taking on extra GPU copy
-        // commands. Dense or single-region uploads already cost little.
-        constexpr int PageTexels = PageSide * PageSide;
-        if (unionTexels <= PageTexels) return false;
-
         int widest = 1, dirtyTexels = 0;
         for (std::size_t i = 0; i < batch.count; ++i) {
             const Region& region = batch.regions[i];
@@ -109,7 +109,20 @@ namespace MobileGL::MG_Util::PackedTextureUpload {
             widest = std::max(widest, region.width);
             dirtyTexels += region.width * region.height;
         }
-        if (dirtyTexels > PageTexels) return false;
+        if (dirtyTexels > PageSide * PageSide) return false;
+
+        // Direct uploads stage and transfer every byte. Packing clears and
+        // transfers the staging page, stages the dirty texels, and reads and
+        // writes them on the GPU. Reserve byte-equivalent headroom for one
+        // upload, two read FBO binds, and one copy per region.
+        constexpr std::uint64_t ExtraCommandCostBytes = 1024;
+        constexpr std::uint64_t MinimumSavingsBytes = 2 * 1024;
+        const std::size_t packedCommands = batch.count + 3;
+        const std::size_t extraCommands = packedCommands - std::min(packedCommands, direct.uploads);
+        const std::uint64_t directWork = 2 * direct.bytes;
+        const std::uint64_t dirtyBytes = dirtyTexels * BytesPerTexel;
+        const std::uint64_t reserve = 3 * dirtyBytes + extraCommands * ExtraCommandCostBytes + MinimumSavingsBytes;
+        if (directWork <= 2 * dirtyBytes + reserve) return false;
 
         std::sort(batch.regions.begin(), batch.regions.begin() + batch.count, [](const Region& a, const Region& b) {
             const int aArea = a.width * a.height;
@@ -129,7 +142,7 @@ namespace MobileGL::MG_Util::PackedTextureUpload {
             batch.width = layout.width;
             batch.height = layout.height;
         }
-        return batch.width > 0 && unionTexels >= std::uint64_t(PageTexels + dirtyTexels + batch.width * batch.height);
+        return batch.width > 0 && directWork > 2 * batch.ByteSize() + reserve;
     }
 
     inline void WritePage(const Batch& batch, std::uint8_t* page) {

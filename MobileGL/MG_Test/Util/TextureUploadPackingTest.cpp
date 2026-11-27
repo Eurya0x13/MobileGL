@@ -85,7 +85,7 @@ namespace {
         AddRegion(batch, mip1.Region(1, 8, 8, 8, 8));
         AddRegion(batch, mip1.Region(1, 240, 240, 16, 16));
 
-        ASSERT_TRUE(Packed::Pack(batch, 512ull * 512 + 256ull * 256));
+        ASSERT_TRUE(Packed::Pack(batch, {4 * (512ull * 512 + 256ull * 256), 2}));
         ExpectValidLayout(batch);
         // Largest first, so the 64x64 sprite takes the page origin.
         EXPECT_EQ(batch.regions[0].width * batch.regions[0].height, 64 * 64);
@@ -99,7 +99,7 @@ namespace {
         AddRegion(batch, mip0.Region(0, 3, 5, 7, 9));
         AddRegion(batch, mip0.Region(0, 400, 300, 20, 11));
         AddRegion(batch, mip0.Region(0, 260, 17, 13, 13));
-        ASSERT_TRUE(Packed::Pack(batch, 512ull * 512));
+        ASSERT_TRUE(Packed::Pack(batch, {4 * 512ull * 512, 1}));
         ExpectValidLayout(batch);
 
         std::vector<std::uint8_t> page(batch.ByteSize(), 0xCD);
@@ -123,12 +123,26 @@ namespace {
         Level mip0(512, 512);
         Packed::Batch single;
         AddRegion(single, mip0.Region(0, 0, 0, 16, 16));
-        EXPECT_FALSE(Packed::Pack(single, 512ull * 512)) << "one region already uploads exactly";
+        EXPECT_FALSE(Packed::Pack(single, {4 * 512ull * 512, 1})) << "one region already uploads exactly";
 
         Packed::Batch dense;
         AddRegion(dense, mip0.Region(0, 0, 0, 16, 16));
         AddRegion(dense, mip0.Region(0, 16, 0, 16, 16));
-        EXPECT_FALSE(Packed::Pack(dense, 32ull * 16)) << "the union box is already small";
+        EXPECT_FALSE(Packed::Pack(dense, {4 * 32ull * 16, 1})) << "the union box is already small";
+    }
+
+    TEST(PackedTextureUpload, AccountsForExtraCopyCommands) {
+        Level mip0(512, 512);
+        Packed::Batch batch;
+        AddRegion(batch, mip0.Region(0, 0, 0, 8, 8));
+        AddRegion(batch, mip0.Region(0, 240, 240, 8, 8));
+        AddRegion(batch, mip0.Region(0, 480, 480, 8, 8));
+
+        // The same byte volume can come from a small number of direct uploads
+        // or a series of commands that packing can consolidate.
+        EXPECT_FALSE(Packed::Pack(batch, {4 * 1024, 1}));
+        ASSERT_TRUE(Packed::Pack(batch, {4 * 1024, 5}));
+        ExpectValidLayout(batch);
     }
 
     TEST(PackedTextureUpload, DeclinesRegionsThatCannotFitThePage) {
@@ -136,12 +150,12 @@ namespace {
         Packed::Batch wide;
         AddRegion(wide, mip0.Region(0, 0, 0, Packed::PageSide + 1, 4));
         AddRegion(wide, mip0.Region(0, 300, 300, 4, 4));
-        EXPECT_FALSE(Packed::Pack(wide, 512ull * 512));
+        EXPECT_FALSE(Packed::Pack(wide, {4 * 512ull * 512, 1}));
 
         Packed::Batch full;
         AddRegion(full, mip0.Region(0, 0, 0, Packed::PageSide, Packed::PageSide));
         AddRegion(full, mip0.Region(0, 256, 256, Packed::PageSide, Packed::PageSide));
-        EXPECT_FALSE(Packed::Pack(full, 512ull * 512)) << "more dirty texels than one page holds";
+        EXPECT_FALSE(Packed::Pack(full, {4 * 512ull * 512, 1})) << "more dirty texels than one page holds";
     }
 
     TEST(PackedTextureUpload, PacksTheMaximumRegionCount) {
@@ -151,7 +165,7 @@ namespace {
             const int size = 8 + static_cast<int>(i % 4) * 4;
             AddRegion(batch, mip0.Region(0, static_cast<int>(i) * 15, static_cast<int>(i) * 15, size, size));
         }
-        ASSERT_TRUE(Packed::Pack(batch, 512ull * 512));
+        ASSERT_TRUE(Packed::Pack(batch, {4 * 512ull * 512, 1}));
         ExpectValidLayout(batch);
     }
 
